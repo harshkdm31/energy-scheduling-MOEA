@@ -135,8 +135,13 @@ def run_experiment_batch(
                     "instance_id": instance.instance_id,
                     "seed": int(seed),
                     "eval_count": eval_count,
+                    "eval_count_type": "scalarization_candidates",
+                    "requested_eval_budget": eval_budget,
                     "n_tasks": instance.n_tasks,
                     "m_machines": instance.m_machines,
+                    "stochastic": False,
+                    "deterministic_per_instance": True,
+                    "statistical_unit": "instance",
                 }
                 save_run_result(
                     filepath=file_path,
@@ -171,8 +176,13 @@ def run_experiment_batch(
                     "instance_id": instance.instance_id,
                     "seed": int(seed),
                     "eval_count": eval_budget,
+                    "eval_count_type": "objective_evaluations",
+                    "requested_eval_budget": eval_budget,
                     "n_tasks": instance.n_tasks,
                     "m_machines": instance.m_machines,
+                    "stochastic": True,
+                    "deterministic_per_instance": False,
+                    "statistical_unit": "instance_seed",
                 }
                 save_run_result(
                     filepath=file_path,
@@ -201,7 +211,8 @@ def run_experiment_batch(
                     "variant": variant,
                     "instance_id": instance.instance_id,
                     "seed": int(seed),
-                    "eval_count": eval_budget,
+                    "eval_count": res.eval_count,
+                    "requested_eval_budget": eval_budget,
                     "n_tasks": instance.n_tasks,
                     "m_machines": instance.m_machines,
                 }
@@ -210,7 +221,7 @@ def run_experiment_batch(
                     non_dominated_F=res.F,
                     non_dominated_X=res.X,
                     wall_clock_time_sec=res.runtime,
-                    eval_count=eval_budget,
+                    eval_count=res.eval_count,
                     metadata=metadata,
                 )
                 generated_paths.append(file_path)
@@ -237,7 +248,8 @@ def run_experiment_batch(
                     "variant": variant,
                     "instance_id": instance.instance_id,
                     "seed": int(seed),
-                    "eval_count": eval_budget,
+                    "eval_count": res.eval_count,
+                    "requested_eval_budget": eval_budget,
                     "n_tasks": instance.n_tasks,
                     "m_machines": instance.m_machines,
                 }
@@ -246,7 +258,7 @@ def run_experiment_batch(
                     non_dominated_F=res.F,
                     non_dominated_X=res.X,
                     wall_clock_time_sec=res.runtime,
-                    eval_count=eval_budget,
+                    eval_count=res.eval_count,
                     metadata=metadata,
                 )
                 generated_paths.append(file_path)
@@ -274,7 +286,8 @@ def run_experiment_batch(
                     "variant": variant,
                     "instance_id": instance.instance_id,
                     "seed": int(seed),
-                    "eval_count": eval_budget,
+                    "eval_count": res.eval_count,
+                    "requested_eval_budget": eval_budget,
                     "n_tasks": instance.n_tasks,
                     "m_machines": instance.m_machines,
                 }
@@ -284,7 +297,7 @@ def run_experiment_batch(
                     non_dominated_F=res.F,
                     non_dominated_X=res.X,
                     wall_clock_time_sec=res.runtime,
-                    eval_count=eval_budget,
+                    eval_count=res.eval_count,
                     metadata=metadata,
                 )
 
@@ -342,7 +355,8 @@ def run_experiment_batch(
                     "variant": variant,
                     "instance_id": instance.instance_id,
                     "seed": int(seed),
-                    "eval_count": eval_budget,
+                    "eval_count": res.eval_count,
+                    "requested_eval_budget": eval_budget,
                     "n_tasks": instance.n_tasks,
                     "m_machines": instance.m_machines,
                     "endpoint_seed_count": len(endpoint_seeds),
@@ -354,7 +368,7 @@ def run_experiment_batch(
                     non_dominated_F=res.F,
                     non_dominated_X=res.X,
                     wall_clock_time_sec=res.runtime,
-                    eval_count=eval_budget,
+                    eval_count=res.eval_count,
                     metadata=metadata,
                 )
                 generated_paths.append(file_path)

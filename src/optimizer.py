@@ -33,11 +33,13 @@ class OptimizationResult:
         X: np.ndarray,
         runtime: float,
         raw_result=None,
+         eval_count: int = 0,
     ):
         self.F = F
         self.X = X
         self.runtime = runtime
         self.raw_result = raw_result
+        self.eval_count = int(eval_count)
 
     def __iter__(self):
         yield self.F
@@ -54,6 +56,8 @@ class OptimizationResult:
                 return self.runtime
             elif item == "raw_result":
                 return self.raw_result
+            elif item in ("eval_count", "n_eval", "evaluations"):
+                return self.eval_count
             raise KeyError(item)
         if item == 0:
             return self.F
@@ -260,9 +264,12 @@ def run_nsga2(
     elif len(X) == 0:
         X = np.empty((0, problem.n), dtype=np.int64)
 
+    actual_eval_count = int(raw_res.algorithm.evaluator.n_eval)
+
     return OptimizationResult(
         F=F,
         X=X,
         runtime=runtime,
         raw_result=raw_res,
+        eval_count=actual_eval_count,
     )

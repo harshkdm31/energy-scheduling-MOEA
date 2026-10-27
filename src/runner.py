@@ -16,7 +16,7 @@ from src.operators import (
     BottleneckAwareMutation
 )
 from src.optimizer import SchedulingProblem, run_nsga2
-
+from src.seeding import build_endpoint_schedules
 
 def save_run_result(
     filepath: Union[str, Path],
@@ -94,6 +94,9 @@ def run_experiment_batch(
         - "nsga2_em": NSGA-II integrated with EnergyAwareMutation.
         - "weighted_greedy": Deterministic weighted sweep.
         - "nsga2_bm": NSGA-II integrated with BottleneckAwareMutation.
+        - "nsga2_seeded": Endpoint-seeded NSGA-II.
+        - "nsga2_seeded_bm": Endpoint-seeded NSGA-II with BM.
+        - "nsga2_seeded_em": Endpoint-seeded NSGA-II with EM.
 
     Enforces budget B(n) = 200 * n function evaluations unless overridden by n_evals.
 
@@ -287,6 +290,74 @@ def run_experiment_batch(
 
                 generated_paths.append(file_path)
 
+        elif variant in (
+            "nsga2_seeded",
+            "nsga2_seeded_bm",
+            "nsga2_seeded_em",
+        ):
+            problem = SchedulingProblem(instance)
+
+            endpoint_seeds = build_endpoint_schedules(
+                w=instance.w,
+                s=instance.s,
+                p=instance.p,
+            )
+            initial_population = np.asarray(
+                endpoint_seeds, dtype=np.int64
+            )
+
+            for seed in seeds:
+                if variant == "nsga2_seeded_bm":
+                    mutation = BottleneckAwareMutation(
+                        w=instance.w,
+                        s=instance.s,
+                        prob=1.0,
+                    )
+                elif variant == "nsga2_seeded_em":
+                    mutation = EnergyAwareMutation(
+                        w=instance.w,
+                        s=instance.s,
+                        p=instance.p,
+                        prob=1.0 / instance.n_tasks,
+                    )
+                else:
+                    mutation = UniformIntegerMutation(
+                        prob=1.0,
+                        prob_var=1.0 / instance.n_tasks,
+                    )
+
+                res = run_nsga2(
+                    problem=problem,
+                    pop_size=effective_pop,
+                    n_evals=eval_budget,
+                    mutation=mutation,
+                    seed=seed,
+                    initial_population=initial_population,
+                )
+
+                file_path = (
+                    out_dir / f"{variant}_seed{seed}.npz"
+                )
+                metadata = {
+                    "variant": variant,
+                    "instance_id": instance.instance_id,
+                    "seed": int(seed),
+                    "eval_count": eval_budget,
+                    "n_tasks": instance.n_tasks,
+                    "m_machines": instance.m_machines,
+                    "endpoint_seed_count": len(endpoint_seeds),
+                    "endpoint_seeding": True,
+                }
+
+                save_run_result(
+                    filepath=file_path,
+                    non_dominated_F=res.F,
+                    non_dominated_X=res.X,
+                    wall_clock_time_sec=res.runtime,
+                    eval_count=eval_budget,
+                    metadata=metadata,
+                )
+                generated_paths.append(file_path)
 
         else:
             raise ValueError(f"Unsupported algorithm variant: '{variant}'.")

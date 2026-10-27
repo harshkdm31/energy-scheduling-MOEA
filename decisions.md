@@ -1,0 +1,7 @@
+# Research Decisions
+
+| Decision ID | Date | Area | Decision Summary | Rationale & Alternatives Considered | Approved By |
+|---|---|---|---|---|---|
+| DEC-001 | 2026-10-27 | Chromosome Encoding | Use 0-indexed integer encoding `[0, m-1]` for chromosome mapping | Direct alignment with Python and NumPy zero-indexing semantics; alternatives like 1-indexed `[1, m]` require continuous offset translation in array operations. | Mohammad Ayaan (moonylit), Harsh Kadam (harshkdm31) |
+| DEC-002 | 2026-10-27 | Power Modeling | Active power formula $P_j = \kappa s_j^\alpha \epsilon_j$ with $\kappa=1.0$ across $\alpha \in \{1, 2, 3\}$ and noise $\epsilon_j \sim \text{Uniform}(0.8, 1.2)$ | Represents polynomial power scaling with speed under realistic sub-linear/linear/super-linear dynamic energy regimes while incorporating hardware variance; alternatives like constant speed-independent power or deterministic powers fail to reflect realistic CMOS scaling and heterogeneity. | Mohammad Ayaan (moonylit), Harsh Kadam (harshkdm31) |
+| DEC-003 | 2026-10-27 | Data Contract | Standard JSON instance schema agreement capturing problem parameters ($n, m, \alpha, \kappa, \text{seed}, w, s, p$) and instance descriptors ($\rho_s, \rho_e, r(s, e)$) | Human-readable, portable, language-agnostic schema with built-in analytical metrics ensuring full reproducibility and easy validation across algorithmic baselines; alternatives like CSV/NPZ lack metadata bundling and schema self-documentation. | Mohammad Ayaan (moonylit), Harsh Kadam (harshkdm31) |

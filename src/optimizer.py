@@ -12,6 +12,7 @@ from pymoo.operators.crossover.pntx import PointCrossover
 from pymoo.operators.sampling.rnd import IntegerRandomSampling
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
+from pymoo.core.sampling import Sampling
 
 from src.instance_generator import ProblemInstance
 from src.operators import (
@@ -152,6 +153,45 @@ class SchedulingProblem(ElementwiseProblem):
         out["F"] = [f1, f2]
 
 
+class EndpointSeededSampling(Sampling):
+    """Insert predefined endpoint schedules into an NSGA-II population."""
+
+    def __init__(self, initial_solutions):
+        super().__init__()
+        self.initial_solutions = np.asarray(
+            initial_solutions, dtype=np.int64
+        )
+
+        if self.initial_solutions.ndim != 2:
+            raise ValueError("initial_solutions must be a 2D array.")
+
+    def _do(self, problem, n_samples, **kwargs):
+        if self.initial_solutions.shape[1] != problem.n_var:
+            raise ValueError(
+                "Initial solutions do not match the problem chromosome length."
+            )
+
+        seeds = self.initial_solutions
+
+        if np.any(seeds < problem.xl) or np.any(seeds > problem.xu):
+            raise ValueError("Initial solutions contain invalid machine indices.")
+
+        # Keep only as many endpoint seeds as the population can hold.
+        seeds = seeds[:n_samples].copy()
+        remaining = n_samples - len(seeds)
+
+        if remaining == 0:
+            return seeds
+
+        # Fill the remaining slots using pymoo's standard integer sampler.
+        random_state = kwargs.get("random_state")
+        random_samples = IntegerRandomSampling()._do(
+            problem, remaining, random_state=random_state
+        )
+
+        return np.vstack((seeds, random_samples))
+
+
 def run_nsga2(
     problem: SchedulingProblem,
     pop_size: int = 100,
@@ -159,6 +199,7 @@ def run_nsga2(
     mutation=None,
     seed: int = 42,
     crossover=None,
+    initial_population: Optional[np.ndarray] = None,
 ) -> OptimizationResult:
     """
     Execute standard NSGA-II optimization engine on SchedulingProblem (Deliverable B5).
@@ -185,7 +226,11 @@ def run_nsga2(
 
     algorithm = NSGA2(
         pop_size=pop_size,
-        sampling=IntegerRandomSampling(),
+        sampling=(
+            IntegerRandomSampling()
+            if initial_population is None
+            else EndpointSeededSampling(initial_population)
+        ),
         crossover=crossover,
         mutation=mutation,
         eliminate_duplicates=True,

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "energy-scheduling-moea"
+version = "0.1.0"
+description = "Multi-objective energy-efficient task scheduling on heterogeneous machines using MOEA"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0,<2.0.0",
+    "scipy>=1.10.0",
+    "pymoo>=0.6.0.1",
+    "matplotlib>=3.7.0",
+    "pytest>=7.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

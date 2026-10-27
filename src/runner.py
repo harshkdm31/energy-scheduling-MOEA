@@ -10,7 +10,11 @@ import numpy as np
 
 from src.baselines import evaluate_objectives, filter_pareto_front, solve_weighted_greedy_sweep
 from src.instance_generator import ProblemInstance
-from src.operators import EnergyAwareMutation, UniformIntegerMutation
+from src.operators import (
+    EnergyAwareMutation,
+    UniformIntegerMutation,
+    BottleneckAwareMutation
+)
 from src.optimizer import SchedulingProblem, run_nsga2
 
 
@@ -89,6 +93,7 @@ def run_experiment_batch(
         - "nsga2_std": Standard NSGA-II with uniform random reset mutation.
         - "nsga2_em": NSGA-II integrated with EnergyAwareMutation.
         - "weighted_greedy": Deterministic weighted sweep.
+        - "nsga2_bm": NSGA-II integrated with BottleneckAwareMutation.
 
     Enforces budget B(n) = 200 * n function evaluations unless overridden by n_evals.
 
@@ -242,6 +247,46 @@ def run_experiment_batch(
                     metadata=metadata,
                 )
                 generated_paths.append(file_path)
+
+        elif variant == "nsga2_bm":
+            problem = SchedulingProblem(instance)
+            mutation = BottleneckAwareMutation(
+                w=instance.w,
+                s=instance.s,
+                prob=1.0,
+            )
+
+            for seed in seeds:
+                res = run_nsga2(
+                    problem=problem,
+                    pop_size=effective_pop,
+                    n_evals=eval_budget,
+                    mutation=mutation,
+                    seed=seed,
+                )
+
+                file_path = out_dir / f"{variant}_seed{seed}.npz"
+
+                metadata = {
+                    "variant": variant,
+                    "instance_id": instance.instance_id,
+                    "seed": int(seed),
+                    "eval_count": eval_budget,
+                    "n_tasks": instance.n_tasks,
+                    "m_machines": instance.m_machines,
+                }
+
+                save_run_result(
+                    filepath=file_path,
+                    non_dominated_F=res.F,
+                    non_dominated_X=res.X,
+                    wall_clock_time_sec=res.runtime,
+                    eval_count=eval_budget,
+                    metadata=metadata,
+                )
+
+                generated_paths.append(file_path)
+
 
         else:
             raise ValueError(f"Unsupported algorithm variant: '{variant}'.")

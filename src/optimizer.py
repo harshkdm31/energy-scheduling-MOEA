@@ -14,7 +14,10 @@ from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 
 from src.instance_generator import ProblemInstance
-from src.operators import UniformIntegerMutation
+from src.operators import (
+    UniformIntegerMutation,
+    BottleneckAwareMutation
+)
 
 
 class OptimizationResult:
@@ -164,7 +167,9 @@ def run_nsga2(
         problem: SchedulingProblem instance.
         pop_size: Population size (default: 100).
         n_evals: Stopping criterion budget in function evaluations (default: 20000, B(n) = 200n).
-        mutation: Genetic mutation operator (defaults to UniformIntegerMutation).
+        mutation: Optional custom pymoo mutation operator. Defaults to
+            UniformIntegerMutation when None. Can be used with BM, EM, or
+            other compatible mutation operators.
         seed: Random seed for reproducibility (default: 42).
         crossover: Crossover operator (defaults to PointCrossover(n_points=1)).
 

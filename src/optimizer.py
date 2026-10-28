@@ -12,9 +12,13 @@ from pymoo.operators.crossover.pntx import PointCrossover
 from pymoo.operators.sampling.rnd import IntegerRandomSampling
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
+from pymoo.core.sampling import Sampling
 
 from src.instance_generator import ProblemInstance
-from src.operators import UniformIntegerMutation
+from src.operators import (
+    UniformIntegerMutation,
+    BottleneckAwareMutation
+)
 
 
 class OptimizationResult:
@@ -29,11 +33,13 @@ class OptimizationResult:
         X: np.ndarray,
         runtime: float,
         raw_result=None,
+         eval_count: int = 0,
     ):
         self.F = F
         self.X = X
         self.runtime = runtime
         self.raw_result = raw_result
+        self.eval_count = int(eval_count)
 
     def __iter__(self):
         yield self.F
@@ -50,6 +56,8 @@ class OptimizationResult:
                 return self.runtime
             elif item == "raw_result":
                 return self.raw_result
+            elif item in ("eval_count", "n_eval", "evaluations"):
+                return self.eval_count
             raise KeyError(item)
         if item == 0:
             return self.F
@@ -149,6 +157,45 @@ class SchedulingProblem(ElementwiseProblem):
         out["F"] = [f1, f2]
 
 
+class EndpointSeededSampling(Sampling):
+    """Insert predefined endpoint schedules into an NSGA-II population."""
+
+    def __init__(self, initial_solutions):
+        super().__init__()
+        self.initial_solutions = np.asarray(
+            initial_solutions, dtype=np.int64
+        )
+
+        if self.initial_solutions.ndim != 2:
+            raise ValueError("initial_solutions must be a 2D array.")
+
+    def _do(self, problem, n_samples, **kwargs):
+        if self.initial_solutions.shape[1] != problem.n_var:
+            raise ValueError(
+                "Initial solutions do not match the problem chromosome length."
+            )
+
+        seeds = self.initial_solutions
+
+        if np.any(seeds < problem.xl) or np.any(seeds > problem.xu):
+            raise ValueError("Initial solutions contain invalid machine indices.")
+
+        # Keep only as many endpoint seeds as the population can hold.
+        seeds = seeds[:n_samples].copy()
+        remaining = n_samples - len(seeds)
+
+        if remaining == 0:
+            return seeds
+
+        # Fill the remaining slots using pymoo's standard integer sampler.
+        random_state = kwargs.get("random_state")
+        random_samples = IntegerRandomSampling()._do(
+            problem, remaining, random_state=random_state
+        )
+
+        return np.vstack((seeds, random_samples))
+
+
 def run_nsga2(
     problem: SchedulingProblem,
     pop_size: int = 100,
@@ -156,6 +203,7 @@ def run_nsga2(
     mutation=None,
     seed: int = 42,
     crossover=None,
+    initial_population: Optional[np.ndarray] = None,
 ) -> OptimizationResult:
     """
     Execute standard NSGA-II optimization engine on SchedulingProblem (Deliverable B5).
@@ -164,7 +212,9 @@ def run_nsga2(
         problem: SchedulingProblem instance.
         pop_size: Population size (default: 100).
         n_evals: Stopping criterion budget in function evaluations (default: 20000, B(n) = 200n).
-        mutation: Genetic mutation operator (defaults to UniformIntegerMutation).
+        mutation: Optional custom pymoo mutation operator. Defaults to
+            UniformIntegerMutation when None. Can be used with BM, EM, or
+            other compatible mutation operators.
         seed: Random seed for reproducibility (default: 42).
         crossover: Crossover operator (defaults to PointCrossover(n_points=1)).
 
@@ -180,7 +230,11 @@ def run_nsga2(
 
     algorithm = NSGA2(
         pop_size=pop_size,
-        sampling=IntegerRandomSampling(),
+        sampling=(
+            IntegerRandomSampling()
+            if initial_population is None
+            else EndpointSeededSampling(initial_population)
+        ),
         crossover=crossover,
         mutation=mutation,
         eliminate_duplicates=True,
@@ -210,9 +264,12 @@ def run_nsga2(
     elif len(X) == 0:
         X = np.empty((0, problem.n), dtype=np.int64)
 
+    actual_eval_count = int(raw_res.algorithm.evaluator.n_eval)
+
     return OptimizationResult(
         F=F,
         X=X,
         runtime=runtime,
         raw_result=raw_res,
+        eval_count=actual_eval_count,
     )

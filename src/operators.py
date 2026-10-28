@@ -140,3 +140,131 @@ class UniformIntegerMutation(Mutation):
                     X_out[k, i] = int(rng.integers(0, m)) if hasattr(rng, "integers") else int(rng.randint(0, m))
 
         return X_out[0] if is_1d else X_out
+
+
+class BottleneckAwareMutation(Mutation):
+    """
+    Bottleneck-Aware Mutation (BM).
+
+    Attempts to move one task from a critical machine to another machine.
+    Strict makespan improvements are preferred. If none exist, a move that
+    does not worsen global makespan may be accepted.
+
+    If no suitable move exists, the chromosome remains unchanged.
+    """
+
+    def __init__(
+        self,
+        w,
+        s,
+        prob=1.0,
+        tol=1e-12,
+        **kwargs,
+    ):
+        self.w = np.asarray(w, dtype=np.float64)
+        self.s = np.asarray(s, dtype=np.float64)
+        self.n = len(self.w)
+        self.m = len(self.s)
+        self.tol = float(tol)
+
+        if self.n == 0 or self.m == 0:
+            raise ValueError("Workloads and machine speeds must be non-empty.")
+        if not np.all(np.isfinite(self.w)) or np.any(self.w <= 0):
+            raise ValueError("Workloads must be finite and positive.")
+        if not np.all(np.isfinite(self.s)) or np.any(self.s <= 0):
+            raise ValueError("Machine speeds must be finite and positive.")
+        if self.tol < 0:
+            raise ValueError("tol must be non-negative.")
+
+        super().__init__(prob=prob, **kwargs)
+
+    @staticmethod
+    def _randint(rng, high):
+        """Support NumPy Generator and legacy RandomState APIs."""
+        if hasattr(rng, "integers"):
+            return int(rng.integers(0, high))
+        return int(rng.randint(0, high))
+
+    def _makespan(self, x):
+        """Calculate the makespan of a chromosome."""
+        loads = np.bincount(
+            x, weights=self.w, minlength=self.m
+        ) / self.s
+        return float(np.max(loads))
+
+    def mutate_chromosome(self, x, rng=None):
+        """Mutate one chromosome and return a new chromosome."""
+        rng = rng if rng is not None else np.random.default_rng()
+        x = np.asarray(x, dtype=np.int64)
+
+        if x.shape != (self.n,):
+            raise ValueError(
+                f"Expected chromosome shape {(self.n,)}, got {x.shape}."
+            )
+        if np.any(x < 0) or np.any(x >= self.m):
+            raise ValueError("Chromosome contains an invalid machine index.")
+
+        original = x.copy()
+        old_makespan = self._makespan(original)
+
+        loads = np.bincount(
+            original, weights=self.w, minlength=self.m
+        ) / self.s
+
+        # Consider every machine tied for the maximum completion time.
+        critical_machines = np.flatnonzero(
+            np.isclose(
+                loads, old_makespan, rtol=0.0, atol=self.tol
+            )
+        )
+
+        improving = []
+        non_worsening = []
+
+        for source in critical_machines:
+            for task in np.flatnonzero(original == source):
+                for destination in range(self.m):
+                    if destination == source:
+                        continue
+
+                    candidate = original.copy()
+                    candidate[task] = destination
+                    new_makespan = self._makespan(candidate)
+
+                    if new_makespan < old_makespan - self.tol:
+                        improving.append(candidate)
+                    elif new_makespan <= old_makespan + self.tol:
+                        non_worsening.append(candidate)
+
+        # Prefer strict improvements; otherwise allow non-worsening moves.
+        choices = improving if improving else non_worsening
+
+        if not choices:
+            return original
+
+        return choices[self._randint(rng, len(choices))]
+
+    def _do(self, problem, X, random_state=None, **kwargs):
+        """Apply BM to a population of chromosomes."""
+        rng = (
+            random_state
+            if random_state is not None
+            else np.random.default_rng()
+        )
+
+        X_out = np.asarray(X, dtype=np.int64).copy()
+        was_1d = X_out.ndim == 1
+
+        if was_1d:
+            X_out = X_out.reshape(1, -1)
+
+        if X_out.ndim != 2 or X_out.shape[1] != self.n:
+            raise ValueError(
+                f"Expected population shape (n_individuals, {self.n}), "
+                f"got {X_out.shape}."
+            )
+
+        for k in range(len(X_out)):
+            X_out[k] = self.mutate_chromosome(X_out[k], rng=rng)
+
+        return X_out[0] if was_1d else X_out

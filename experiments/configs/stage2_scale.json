@@ -1,0 +1,33 @@
+{
+  "stage": 2,
+  "description": "Stage 2 Scale: Small (50x4) and Large (500x16) at alpha=2.0",
+  "scales": [
+    {
+      "name": "small",
+      "n_tasks": 50,
+      "m_machines": 4,
+      "eval_budget": 10000
+    },
+    {
+      "name": "large",
+      "n_tasks": 500,
+      "m_machines": 16,
+      "eval_budget": 100000
+    }
+  ],
+  "alpha": 2.0,
+  "kappa": 1.0,
+  "eval_budget_multiplier": 200,
+  "pop_size": 100,
+  "final_test_seeds": [
+    201, 202, 203, 204, 205, 206, 207, 208, 209, 210,
+    211, 212, 213, 214, 215, 216, 217, 218, 219, 220,
+    221, 222, 223, 224, 225, 226, 227, 228, 229, 230
+  ],
+  "variants": [
+    "random",
+    "nsga2_std",
+    "nsga2_em",
+    "weighted_greedy"
+  ]
+}

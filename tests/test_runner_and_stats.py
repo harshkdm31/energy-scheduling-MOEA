@@ -13,6 +13,8 @@ from src.statistics import (
     holm_bonferroni_correction,
     paired_wilcoxon_test,
     summarize_metric,
+    calculate_paired_rank_biserial,
+    one_sample_wilcoxon_test,
 )
 
 
@@ -107,6 +109,56 @@ def test_paired_wilcoxon_test():
     # 3. Validation error on length mismatch
     with pytest.raises(ValueError, match="mismatch"):
         paired_wilcoxon_test([1.0, 2.0], [1.0])
+
+def test_one_sample_wilcoxon_test():
+    """Verify comparison against one fixed deterministic baseline."""
+    # All stochastic runs exceed the fixed baseline.
+    values = np.array([12.0, 13.0, 14.0, 15.0, 16.0, 17.0])
+    statistic, p_value = one_sample_wilcoxon_test(values, reference=10.0)
+
+    assert statistic == 0.0
+    assert p_value < 0.05
+
+    # All runs equal the fixed baseline.
+    statistic, p_value = one_sample_wilcoxon_test(
+        [10.0, 10.0, 10.0],
+        reference=10.0,
+    )
+    assert statistic == 0.0
+    assert p_value == 1.0
+
+    # Invalid inputs.
+    with pytest.raises(ValueError, match="must be non-empty"):
+        one_sample_wilcoxon_test([], reference=10.0)
+
+    with pytest.raises(ValueError, match="finite"):
+        one_sample_wilcoxon_test([10.0, np.nan], reference=10.0)
+
+
+def test_calculate_paired_rank_biserial():
+    """Verify direction, magnitude, and ties for paired effect size."""
+    a = np.array([10.0, 20.0, 30.0])
+    b = np.array([1.0, 2.0, 3.0])
+
+    # Every A observation exceeds its matching B observation.
+    assert calculate_paired_rank_biserial(a, b) == 1.0
+
+    # Reverse direction.
+    assert calculate_paired_rank_biserial(b, a) == -1.0
+
+    # Identical paired observations.
+    assert calculate_paired_rank_biserial(a, a) == 0.0
+
+    # Mixed positive and negative differences.
+    effect = calculate_paired_rank_biserial(
+        [10.0, 5.0, 8.0],
+        [5.0, 10.0, 8.0],
+    )
+    assert -1.0 <= effect <= 1.0
+
+    # Length mismatch.
+    with pytest.raises(ValueError, match="mismatch"):
+        calculate_paired_rank_biserial([1.0, 2.0], [1.0])
 
 
 def test_holm_bonferroni_correction():

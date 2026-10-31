@@ -1,46 +1,127 @@
+
 """
 Non-parametric statistical analysis engine for multi-objective experimental comparisons.
 """
 
-from typing import Any, Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union
+
 import numpy as np
 import scipy.stats
 
 
+ArrayLike = Union[List[float], np.ndarray]
+
+
+def _as_finite_array(data: ArrayLike, name: str) -> np.ndarray:
+    """Convert input to a non-empty, finite one-dimensional float array."""
+    arr = np.asarray(data, dtype=np.float64).ravel()
+
+    if len(arr) == 0:
+        raise ValueError(f"{name} must be non-empty.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{name} must contain only finite values.")
+
+    return arr
+
+
 def paired_wilcoxon_test(
-    data_a: Union[List[float], np.ndarray],
-    data_b: Union[List[float], np.ndarray],
+    data_a: ArrayLike,
+    data_b: ArrayLike,
 ) -> Tuple[float, float]:
     """
-    Paired two-tailed Wilcoxon signed-rank test across matching seed pairs (Deliverable B9).
+    Paired two-tailed Wilcoxon signed-rank test across matching run seeds.
 
-    Args:
-        data_a: Metric observations from algorithm A across seeds.
-        data_b: Metric observations from algorithm B across matching seeds.
-
-    Returns:
-        (statistic, p_value): Test statistic and two-tailed p-value.
+    Positive differences correspond to data_a > data_b.
     """
-    a = np.asarray(data_a, dtype=np.float64).ravel()
-    b = np.asarray(data_b, dtype=np.float64).ravel()
+    a = _as_finite_array(data_a, "data_a")
+    b = _as_finite_array(data_b, "data_b")
 
     if len(a) != len(b):
         raise ValueError(f"Array length mismatch: {len(a)} vs {len(b)}.")
-    if len(a) == 0:
-        raise ValueError("Input arrays must not be empty.")
 
-    # Handle exact ties or identical distributions
     diffs = a - b
+
     if np.all(np.isclose(diffs, 0.0, atol=1e-12)):
         return 0.0, 1.0
 
-    # Non-zero differences check
-    non_zero_diffs = diffs[~np.isclose(diffs, 0.0, atol=1e-12)]
-    if len(non_zero_diffs) == 0:
+    res = scipy.stats.wilcoxon(
+        diffs,
+        alternative="two-sided",
+        zero_method="pratt",
+        method="auto",
+    )
+    return float(res.statistic), float(res.pvalue)
+
+
+def one_sample_wilcoxon_test(
+    data: ArrayLike,
+    reference: float,
+) -> Tuple[float, float]:
+    """
+    Two-tailed one-sample Wilcoxon signed-rank test against a fixed reference.
+
+    Example:
+        data = stochastic algorithm HV values across independent runs.
+        reference = the single deterministic baseline HV.
+
+    Each stochastic run contributes one difference. The reference is not
+    treated as a second sample or as repeated independent observations.
+    """
+    values = _as_finite_array(data, "data")
+    reference = float(reference)
+
+    if not np.isfinite(reference):
+        raise ValueError("reference must be finite.")
+
+    diffs = values - reference
+
+    if np.all(np.isclose(diffs, 0.0, atol=1e-12)):
         return 0.0, 1.0
 
-    res = scipy.stats.wilcoxon(a, b, alternative="two-sided")
+    res = scipy.stats.wilcoxon(
+        diffs,
+        alternative="two-sided",
+        zero_method="pratt",
+        method="auto",
+    )
     return float(res.statistic), float(res.pvalue)
+
+
+def calculate_paired_rank_biserial(
+    data_a: ArrayLike,
+    data_b: ArrayLike,
+) -> float:
+    """
+    Calculate matched-pairs rank-biserial correlation.
+
+    Positive values indicate data_a tends to exceed data_b.
+    Negative values indicate data_b tends to exceed data_a.
+    The result is bounded by [-1, 1].
+    """
+    a = _as_finite_array(data_a, "data_a")
+    b = _as_finite_array(data_b, "data_b")
+
+    if len(a) != len(b):
+        raise ValueError(f"Array length mismatch: {len(a)} vs {len(b)}.")
+
+    diffs = a - b
+    nonzero = diffs[~np.isclose(diffs, 0.0, atol=1e-12)]
+
+    if len(nonzero) == 0:
+        return 0.0
+
+    ranks = scipy.stats.rankdata(np.abs(nonzero), method="average")
+
+    positive_rank_sum = float(np.sum(ranks[nonzero > 0]))
+    negative_rank_sum = float(np.sum(ranks[nonzero < 0]))
+    total_rank_sum = positive_rank_sum + negative_rank_sum
+
+    if total_rank_sum == 0.0:
+        return 0.0
+
+    return float(
+        (positive_rank_sum - negative_rank_sum) / total_rank_sum
+    )
 
 
 def holm_bonferroni_correction(
@@ -48,103 +129,86 @@ def holm_bonferroni_correction(
     alpha: float = 0.05,
 ) -> List[Tuple[float, bool]]:
     """
-    Holm-Bonferroni step-down correction for multiple comparisons (Deliverable B9).
+    Holm-Bonferroni step-down correction for multiple comparisons.
 
-    Sorts p-values ascending and tests hypothesis k against threshold:
-        p_(k) <= alpha / (m - k + 1)
-    Testing terminates at the first failure to reject.
-
-    Args:
-        p_values: List of raw p-values.
-        alpha: Target family-wise error rate (default: 0.05).
-
-    Returns:
-        List of tuples (adjusted_p_value, is_significant) preserving original input order.
+    Returns adjusted p-values and significance flags in original input order.
     """
-    m = len(p_values)
-    if m == 0:
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be between 0 and 1.")
+
+    if len(p_values) == 0:
         return []
 
-    indexed_p = sorted(enumerate(p_values), key=lambda x: x[1])
+    values = np.asarray(p_values, dtype=np.float64)
 
-    # Step-down testing
+    if not np.all(np.isfinite(values)):
+        raise ValueError("p-values must be finite.")
+    if np.any((values < 0.0) | (values > 1.0)):
+        raise ValueError("p-values must be between 0 and 1.")
+
+    m = len(values)
+    indexed_p = sorted(enumerate(values.tolist()), key=lambda x: x[1])
+
     rejected_ranks = set()
-    for rank_idx, (orig_idx, p_val) in enumerate(indexed_p):
-        k = rank_idx + 1
-        threshold = alpha / (m - k + 1)
+    for rank_idx, (_, p_val) in enumerate(indexed_p):
+        threshold = alpha / (m - rank_idx)
         if p_val <= threshold:
             rejected_ranks.add(rank_idx)
         else:
             break
 
-    # Adjusted p-values with monotonicity enforcement
     adj_p_sorted = [0.0] * m
     running_max = 0.0
-    for rank_idx, (orig_idx, p_val) in enumerate(indexed_p):
-        k = rank_idx + 1
-        curr_adj = min(1.0, (m - k + 1) * p_val)
+
+    for rank_idx, (_, p_val) in enumerate(indexed_p):
+        curr_adj = min(1.0, (m - rank_idx) * p_val)
         running_max = max(running_max, curr_adj)
         adj_p_sorted[rank_idx] = running_max
 
-    # Map back to original order
     results = [None] * m
+
     for rank_idx, (orig_idx, _) in enumerate(indexed_p):
-        results[orig_idx] = (float(adj_p_sorted[rank_idx]), rank_idx in rejected_ranks)
+        results[orig_idx] = (
+            float(adj_p_sorted[rank_idx]),
+            rank_idx in rejected_ranks,
+        )
 
     return results
 
 
 def calculate_cliffs_delta(
-    data_a: Union[List[float], np.ndarray],
-    data_b: Union[List[float], np.ndarray],
+    data_a: ArrayLike,
+    data_b: ArrayLike,
 ) -> float:
     """
-    Compute Cliff's Delta non-parametric effect size (Deliverable B9).
+    Compute independent-sample Cliff's delta.
 
-        d = (#(a_i > b_j) - #(a_i < b_j)) / (n_a * n_b)
+    d = (#(a_i > b_j) - #(a_i < b_j)) / (n_a * n_b)
 
-    Returns:
-        float: Cliff's delta in range [-1.0, 1.0].
+    Use for independent samples, not matched-pairs comparisons.
     """
-    a = np.asarray(data_a, dtype=np.float64).ravel()
-    b = np.asarray(data_b, dtype=np.float64).ravel()
+    a = _as_finite_array(data_a, "data_a")
+    b = _as_finite_array(data_b, "data_b")
 
-    n_a = len(a)
-    n_b = len(b)
-
-    if n_a == 0 or n_b == 0:
-        raise ValueError("Both input arrays must be non-empty.")
-
-    # Vectorized pairwise differences matrix (n_a, n_b)
     diffs = a[:, None] - b[None, :]
     greater = np.sum(diffs > 1e-12)
     less = np.sum(diffs < -1e-12)
 
-    return float((greater - less) / (n_a * n_b))
+    return float((greater - less) / (len(a) * len(b)))
 
 
 def summarize_metric(
-    data: Union[List[float], np.ndarray],
+    data: ArrayLike,
 ) -> Dict[str, float]:
-    """
-    Summarize a performance metric distribution using Median and IQR (Deliverable B9).
-
-    Returns:
-        dict containing 'median', 'iqr' (q75 - q25), 'q25', 'q75', 'min', 'max', 'n'.
-    """
-    arr = np.asarray(data, dtype=np.float64).ravel()
-
-    if len(arr) == 0:
-        raise ValueError("Cannot summarize an empty array.")
+    """Summarize a metric distribution using median and IQR."""
+    arr = _as_finite_array(data, "data")
 
     q25 = float(np.percentile(arr, 25))
     q75 = float(np.percentile(arr, 75))
-    median = float(np.median(arr))
-    iqr = float(q75 - q25)
 
     return {
-        "median": median,
-        "iqr": iqr,
+        "median": float(np.median(arr)),
+        "iqr": float(q75 - q25),
         "q25": q25,
         "q75": q75,
         "min": float(np.min(arr)),

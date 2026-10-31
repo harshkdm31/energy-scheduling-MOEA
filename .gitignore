@@ -28,6 +28,7 @@ results/*
 # Generated data: do not commit large outputs
 data/generated/
 data/raw/
+data/raw_runs/
 
 # Notebook checkpoints
 .ipynb_checkpoints/

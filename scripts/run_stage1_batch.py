@@ -6,7 +6,7 @@ Orchestrates the frozen Stage 1 Core experimental evaluation matrix:
   - Problem size: n=200, m=8, B(n)=40,000 function evaluations, pop_size=100.
   - Exponents: alpha in [1.0, 2.0, 3.0].
   - Seeds: 30 reserved test seeds (201..230).
-  - Variants: nsga2_std, nsga2_em, weighted_greedy.
+  - Variants: random, nsga2_std, nsga2_em, weighted_greedy.
   - Invariant enforcement: f1 >= LB_C - 1e-9, f2 >= LB_E - 1e-9.
   - CLI flag --smoke-test: executes on miniature dimensions (n=20, m=4, 2 seeds, 100 evals)
     for sub-second CI validation.
@@ -147,11 +147,14 @@ def run_stage1_batch(
         resolved_budget = eval_budget if eval_budget is not None else config.get("eval_budget", 40000)
         resolved_pop_size = pop_size if pop_size is not None else config.get("pop_size", 100)
 
-    # Production variants for comparison: nsga2_std, nsga2_em, weighted_greedy
+    # Use explicitly supplied variants; otherwise respect the frozen config.
     if variants is not None:
         resolved_variants = variants
     else:
-        resolved_variants = ["nsga2_std", "nsga2_em", "weighted_greedy"]
+        resolved_variants = config.get(
+            "variants",
+            ["random", "nsga2_std", "nsga2_em", "weighted_greedy"]
+        )
 
     out_root = REPO_ROOT / output_dir
     out_root.mkdir(parents=True, exist_ok=True)

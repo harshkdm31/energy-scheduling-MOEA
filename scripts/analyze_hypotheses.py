@@ -29,8 +29,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.runner import load_run_result
 from src.statistics import (
-    calculate_cliffs_delta,
+    calculate_paired_rank_biserial,
     holm_bonferroni_correction,
+    one_sample_wilcoxon_test,
     paired_wilcoxon_test,
     summarize_metric,
 )
@@ -229,18 +230,23 @@ def run_hypothesis_analysis(
                 hv_val = compute_hypervolume_2d(F, ref_point)
                 hv_by_instance[inst_id][variant][seed] = hv_val
 
-    # Step 2: Formulate hypothesis comparisons for each instance / alpha
-    # Comparisons:
-    #   1. nsga2_em (A) vs nsga2_std (B)
-    #   2. nsga2_em (A) vs weighted_greedy (B)
+
+    # Step 2: Formulate hypothesis comparisons for each instance / alpha.
+    #
+    # EM vs Standard: paired stochastic runs, matched by seed.
+    # EM vs Random: paired stochastic runs, matched by seed.
+    # EM vs Weighted Greedy: one-sample test against one fixed deterministic HV.
     comparisons = [
-        ("nsga2_em", "nsga2_std", "HV: nsga2_em vs nsga2_std"),
-        ("nsga2_em", "weighted_greedy", "HV: nsga2_em vs weighted_greedy"),
+        ("nsga2_em", "nsga2_std", "paired",
+         "HV: nsga2_em vs nsga2_std"),
+        ("nsga2_em", "random", "paired",
+         "HV: nsga2_em vs random"),
+        ("nsga2_em", "weighted_greedy", "fixed_baseline",
+         "HV: nsga2_em vs weighted_greedy"),
     ]
 
     hypothesis_records: List[Dict[str, Any]] = []
 
-    # Sort instances by alpha
     sorted_instances = sorted(
         hv_by_instance.keys(),
         key=lambda i: instance_meta[i].get("alpha", 0.0),
@@ -251,40 +257,96 @@ def run_hypothesis_analysis(
         alpha_val = meta.get("alpha", "N/A")
         variants_dict = hv_by_instance[inst_id]
 
-        for var_a, var_b, comp_label in comparisons:
+        for var_a, var_b, comparison_type, comp_label in comparisons:
             if var_a not in variants_dict or var_b not in variants_dict:
                 continue
 
             seeds_a = variants_dict[var_a]
             seeds_b = variants_dict[var_b]
-            common_seeds = sorted(set(seeds_a.keys()).intersection(set(seeds_b.keys())))
 
-            if len(common_seeds) == 0:
+            if not seeds_a or not seeds_b:
                 continue
 
-            data_a = [seeds_a[s] for s in common_seeds]
-            data_b = [seeds_b[s] for s in common_seeds]
+            if comparison_type == "paired":
+                common_seeds = sorted(
+                    set(seeds_a.keys()).intersection(seeds_b.keys())
+                )
 
-            # Wilcoxon signed-rank test
-            w_stat, p_val = paired_wilcoxon_test(data_a, data_b)
+                if len(common_seeds) == 0:
+                    continue
 
-            # Cliff's Delta effect size
-            cliffs_d = calculate_cliffs_delta(data_a, data_b)
+                data_a = [seeds_a[s] for s in common_seeds]
+                data_b = [seeds_b[s] for s in common_seeds]
 
-            # Summaries
-            summary_a = summarize_metric(data_a)
-            summary_b = summarize_metric(data_b)
+                w_stat, p_val = paired_wilcoxon_test(data_a, data_b)
+
+                effect_size = calculate_paired_rank_biserial(
+                    data_a, data_b
+                )
+
+                summary_a = summarize_metric(data_a)
+                summary_b = summarize_metric(data_b)
+
+                n_samples = len(common_seeds)
+                test_name = "Paired Wilcoxon signed-rank"
+                effect_name = "Paired rank-biserial"
+
+            else:
+                # Weighted Greedy is deterministic per instance.
+                # Its seed-labelled archives are duplicate representations
+                # of one fixed baseline, not independent observations.
+                greedy_values = np.asarray(
+                    list(seeds_b.values()), dtype=np.float64
+                )
+
+                baseline_hv = float(greedy_values[0])
+
+                if not np.allclose(
+                    greedy_values,
+                    baseline_hv,
+                    rtol=1e-10,
+                    atol=1e-12,
+                ):
+                    raise RuntimeError(
+                        f"Weighted Greedy archives disagree for instance "
+                        f"{inst_id}: {greedy_values.tolist()}"
+                    )
+
+                # Each stochastic EM run contributes one difference
+                # against the same fixed deterministic baseline.
+                common_seeds = sorted(seeds_a.keys())
+                data_a = [seeds_a[s] for s in common_seeds]
+
+                w_stat, p_val = one_sample_wilcoxon_test(
+                    data_a,
+                    reference=baseline_hv,
+                )
+
+                effect_size = calculate_paired_rank_biserial(
+                    data_a,
+                    [baseline_hv] * len(data_a),
+                )
+
+                summary_a = summarize_metric(data_a)
+                summary_b = summarize_metric([baseline_hv])
+
+                n_samples = len(data_a)
+                test_name = "One-sample Wilcoxon signed-rank"
+                effect_name = "One-sample rank-biserial"
 
             hypothesis_records.append({
                 "metric_comp": comp_label,
                 "instance_id": inst_id,
                 "alpha": alpha_val,
-                "n_samples": len(common_seeds),
+                "comparison_type": comparison_type,
+                "test_name": test_name,
+                "effect_name": effect_name,
+                "n_samples": n_samples,
                 "summary_a": summary_a,
                 "summary_b": summary_b,
                 "wilcoxon_w": w_stat,
                 "p_value": p_val,
-                "cliffs_delta": cliffs_d,
+                "rank_biserial": effect_size,
             })
 
     # Step 3: Apply Holm-Bonferroni step-down correction across the hypothesis family
@@ -295,37 +357,60 @@ def run_hypothesis_analysis(
         rec["holm_adj_p"] = adj_p
         rec["is_significant"] = is_sig
 
+
     # Step 4: Generate Markdown Table Report
     md_lines: List[str] = [
         "# Stage 1 Hypothesis Testing Results",
         "",
         "## Statistical Methodology",
-        "- **Metric**: 2D Hypervolume indicator ($HV$) evaluated with analytical reference point $r = (1.1 \\times \\max f_1, 1.1 \\times \\max f_2)$.",
-        "- **Test**: Paired two-tailed Wilcoxon signed-rank test across matching random seeds.",
-        "- **Multiple Comparison Correction**: Holm-Bonferroni step-down correction at family-wise error rate $\\alpha = 0.05$.",
-        "- **Effect Size**: Cliff's Delta non-parametric effect size $d \\in [-1.0, 1.0]$.",
-        "- **Central Tendency & Dispersion**: Median (IQR) format.",
+        "- **Metric**: 2D Hypervolume indicator ($HV$), evaluated using a common reference point for all variants and runs of each instance: $r = (1.1 \\times \\max f_1, 1.1 \\times \\max f_2)$.",
+        "- **EM vs Standard and EM vs Random**: Paired two-tailed Wilcoxon signed-rank tests using matching stochastic run seeds.",
+        "- **EM vs Weighted Greedy**: Two-tailed one-sample Wilcoxon signed-rank test on EM run differences from the single deterministic Weighted Greedy baseline.",
+        "- **Effect Size**: Matched-pairs rank-biserial correlation. Positive values indicate higher HV for NSGA-II EM.",
+        "- **Multiple Comparisons**: Holm-Bonferroni step-down correction across all hypotheses included in this analysis, at family-wise error rate $\\alpha = 0.05$.",
+        "- **Summary**: Median and interquartile range (IQR).",
+        "- **Experimental unit**: Stochastic algorithm runs on a fixed problem instance. Run seeds are not independent problem instances.",
         "",
         "## Summary Results Table",
         "",
-        "| Metric / Comparison | alpha | Median A (IQR) | Median B (IQR) | Wilcoxon W | p-value | Holm-Adj p | Cliff's Delta | Significant? |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Metric / Comparison | alpha | Test | n | Median A (IQR) | Median B (IQR) | Wilcoxon W | p-value | Holm-Adj p | Rank-biserial | Significant? |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
 
     for rec in hypothesis_records:
-        med_a_str = f"{rec['summary_a']['median']:.2f} ({rec['summary_a']['iqr']:.2f})"
-        med_b_str = f"{rec['summary_b']['median']:.2f} ({rec['summary_b']['iqr']:.2f})"
+        med_a_str = (
+            f"{rec['summary_a']['median']:.2f} "
+            f"({rec['summary_a']['iqr']:.2f})"
+        )
+        med_b_str = (
+            f"{rec['summary_b']['median']:.2f} "
+            f"({rec['summary_b']['iqr']:.2f})"
+        )
         w_val_str = f"{rec['wilcoxon_w']:.1f}"
-        p_val_str = f"{rec['p_value']:.4e}" if rec["p_value"] < 0.0001 else f"{rec['p_value']:.4f}"
-        adj_p_str = f"{rec['holm_adj_p']:.4e}" if rec["holm_adj_p"] < 0.0001 else f"{rec['holm_adj_p']:.4f}"
-        delta_str = f"{rec['cliffs_delta']:+.3f}"
+        p_val_str = (
+            f"{rec['p_value']:.4e}"
+            if rec["p_value"] < 0.0001
+            else f"{rec['p_value']:.4f}"
+        )
+        adj_p_str = (
+            f"{rec['holm_adj_p']:.4e}"
+            if rec["holm_adj_p"] < 0.0001
+            else f"{rec['holm_adj_p']:.4f}"
+        )
+        effect_str = f"{rec['rank_biserial']:+.3f}"
         sig_str = "**YES**" if rec["is_significant"] else "NO"
 
-        alpha_str = f"{rec['alpha']}" if isinstance(rec["alpha"], str) else f"{rec['alpha']:.1f}"
+        alpha_str = (
+            f"{rec['alpha']}"
+            if isinstance(rec["alpha"], str)
+            else f"{rec['alpha']:.1f}"
+        )
 
         row = (
-            f"| {rec['metric_comp']} | {alpha_str} | {med_a_str} | {med_b_str} | "
-            f"{w_val_str} | {p_val_str} | {adj_p_str} | {delta_str} | {sig_str} |"
+            f"| {rec['metric_comp']} | {alpha_str} | "
+            f"{rec['test_name']} | {rec['n_samples']} | "
+            f"{med_a_str} | {med_b_str} | {w_val_str} | "
+            f"{p_val_str} | {adj_p_str} | {effect_str} | {sig_str} |"
         )
         md_lines.append(row)
 

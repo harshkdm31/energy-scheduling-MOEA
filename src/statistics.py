@@ -27,11 +27,20 @@ def _as_finite_array(data: ArrayLike, name: str) -> np.ndarray:
 def paired_wilcoxon_test(
     data_a: ArrayLike,
     data_b: ArrayLike,
+    method: str = "auto",
 ) -> Tuple[float, float]:
     """
-    Paired two-tailed Wilcoxon signed-rank test across matching run seeds.
+    Paired two-tailed Wilcoxon signed-rank test across matched observations.
+
+    Observations may represent independent problem instances or matching run
+    seeds, depending on the experimental design.
 
     Positive differences correspond to data_a > data_b.
+
+    Args:
+        data_a: First set of paired observations.
+        data_b: Second set of paired observations.
+        method: SciPy Wilcoxon p-value method ("auto", "exact", or "approx").
     """
     a = _as_finite_array(data_a, "data_a")
     b = _as_finite_array(data_b, "data_b")
@@ -48,7 +57,7 @@ def paired_wilcoxon_test(
         diffs,
         alternative="two-sided",
         zero_method="pratt",
-        method="auto",
+        method=method,
     )
     return float(res.statistic), float(res.pvalue)
 

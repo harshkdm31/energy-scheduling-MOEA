@@ -16,8 +16,10 @@ skipped. Incomplete or invalid instances are rerun.
 import argparse
 import json
 import shutil
+import pickle
 import sys
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, Dict
 
@@ -187,7 +189,15 @@ def validate_instance_archives(
                 )
                 validated.append(stats)
 
-    except (ValueError, AssertionError, KeyError, OSError, EOFError) as exc:
+    except (
+        ValueError,
+        AssertionError,
+        KeyError,
+        OSError,
+        EOFError,
+        zipfile.BadZipFile,
+        pickle.UnpicklingError,
+    ) as exc:
         print(f"Existing instance archives failed validation: {exc}")
         return None
 

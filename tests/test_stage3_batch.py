@@ -150,3 +150,49 @@ def test_stage3_recovers_incomplete_instance(tmp_path: Path):
     archives = list(instance_dir.glob("*.npz"))
     assert len(archives) == 8
     assert missing_archive.exists()
+
+def test_stage3_recovers_corrupted_archive(tmp_path: Path):
+    """Verify a corrupted archive triggers full instance regeneration."""
+
+    output_dir = tmp_path / "stage3_corruption"
+    instances_dir = tmp_path / "instances"
+
+    run_stage3_batch(
+        output_dir=str(output_dir),
+        instances_dir=str(instances_dir),
+        smoke_test=True,
+    )
+
+    instance_dir = (
+        output_dir
+        / "smoke"
+        / "alpha_2"
+        / "inst_n20_m4_a2_s42020"
+    )
+
+    corrupted_archive = instance_dir / "nsga2_em_seed201.npz"
+
+    assert corrupted_archive.exists()
+
+    # Replace the valid NPZ archive with invalid ZIP content.
+    corrupted_archive.write_bytes(b"This is not a valid NPZ archive")
+
+    recovered = run_stage3_batch(
+        output_dir=str(output_dir),
+        instances_dir=str(instances_dir),
+        smoke_test=True,
+    )
+
+    assert recovered["status"] == "PASS"
+    assert recovered["completed_instances"] == 1
+    assert recovered["skipped_instances"] == 0
+    assert recovered["rerun_instances"] == 1
+    assert recovered["total_files"] == 8
+
+    # Confirm every regenerated archive can be loaded.
+    archives = list(instance_dir.glob("*.npz"))
+    assert len(archives) == 8
+
+    for archive in archives:
+        data = load_run_result(archive)
+        assert len(data["non_dominated_F"]) > 0
